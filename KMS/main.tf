@@ -1,48 +1,43 @@
-# ---------------------------------------------------------
-# KMS Key (Symmetric)
-# ---------------------------------------------------------
-resource "aws_kms_key" "xfusion_kms_key" {
-  description              = "Symmetric KMS key for encryption/decryption"
-  key_usage                = "ENCRYPT_DECRYPT"
+resource "aws_kms_key" "devops_kms_key" {
+  description              = "KMS key for encryption"
+  deletion_window_in_days  = 10
   customer_master_key_spec = "SYMMETRIC_DEFAULT"
-  is_enabled               = true
+  key_usage                = "ENCRYPT_DECRYPT"
 
   tags = {
-    Name = "xfusion-kms-key"
+    Name = "devops-kms-key"
+  }
+
+}
+
+resource "aws_kms_alias" "devops_alias" {
+  name          = "alias/devops-kms-key"
+  target_key_id = aws_kms_key.devops_kms_key.key_id
+}
+
+data "local_file" "sensitive_file" {
+  filename = "/home/bob/terraform/SensitiveData.txt"
+}
+
+resource "aws_kms_ciphertext" "devops_encrypted" {
+  key_id    = aws_kms_key.devops_kms_key.key_id
+  plaintext = data.local_file.sensitive_file.content
+}
+
+resource "local_file" "devops_encrypted_file" {
+  content  = aws_kms_ciphertext.devops_encrypted.ciphertext_blob
+  filename = "/home/bob/terraform/EncryptedData.bin"
+}
+
+data "aws_kms_secrets" "devops_decrypted" {
+  secret {
+    name    = "decrypted"
+    payload = aws_kms_ciphertext.devops_encrypted.ciphertext_blob
+
   }
 }
 
-# ---------------------------------------------------------
-# Encrypt SensitiveData.txt using local-exec
-# ---------------------------------------------------------
-resource "null_resource" "encrypt_file" {
-  depends_on = [aws_kms_key.xfusion_kms_key]
-
-  provisioner "local-exec" {
-    command = <<EOT
-aws kms encrypt \
-  --key-id ${aws_kms_key.xfusion_kms_key.key_id} \
-  --plaintext fileb:///home/bob/terraform/SensitiveData.txt \
-  --output text \
-  --query CiphertextBlob | base64 --decode > /home/bob/terraform/EncryptedData.bin
-EOT
-  }
-}
-
-# ---------------------------------------------------------
-# Decrypt the encrypted file and verify match
-# ---------------------------------------------------------
-resource "null_resource" "decrypt_file" {
-  depends_on = [null_resource.encrypt_file]
-
-  provisioner "local-exec" {
-    command = <<EOT
-aws kms decrypt \
-  --ciphertext-blob fileb:///home/bob/terraform/EncryptedData.bin \
-  --output text \
-  --query Plaintext | base64 --decode > /home/bob/terraform/DecryptedData.txt
-
-diff /home/bob/terraform/SensitiveData.txt /home/bob/terraform/DecryptedData.txt
-EOT
-  }
+resource "local_file" "devops_decrypted_file" {
+  content  = data.aws_kms_secrets.devops_decrypted.plaintext["decrypted"]
+  filename = "/home/bob/terraform/DecryptedData.txt"
 }
